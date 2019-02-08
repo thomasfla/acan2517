@@ -4,7 +4,7 @@
 // https://github.com/pierremolinaro/acan2517
 //
 //——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-
+//#define OPTIMIZED_SPI
 #include <ACAN2517.h>
 
 //——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -222,7 +222,7 @@ uint32_t ACAN2517::begin (const ACAN2517Settings & inSettings,
     pinMode (mCS, OUTPUT) ;
     deassertCS () ;
   //----------------------------------- Set SPI clock to 1 MHz
-    mSPISettings = SPISettings (1UL * 1000 * 1000, MSBFIRST, SPI_MODE0) ;
+    mSPISettings = SPISettings (1 * 1000 * 1000, MSBFIRST, SPI_MODE0) ;
   //----------------------------------- Request configuration
     writeByteRegister (C1CON_REGISTER + 3, 0x04 | (1 << 3)) ; // Request configuration mode, abort all transmissions
   //----------------------------------- Wait (2 ms max) until requested mode is reached
@@ -465,15 +465,13 @@ bool ACAN2517::enterInTransmitBuffer (const CANMessage & inMessage) {
 
 void ACAN2517::appendInControllerTxFIFO (const CANMessage & inMessage) {
   const uint16_t ramAddress = (uint16_t) (0x400 + readRegisterSPI (C1FIFOUA_REGISTER (2))) ;
-  assertCS () ;
-    writeCommandSPI (ramAddress) ;
-    //--- Write identifier: if an extended frame is sent, identifier bits sould be reordered (see DS20005678B, page 27)
+    //--- identifier: if an extended frame is sent, identifier bits sould be reordered (see DS20005678B, page 27)
       uint32_t idf = inMessage.id ;
       if (inMessage.ext) {
         idf = ((inMessage.id >> 18) & 0x7FF) | ((inMessage.id & 0x3FFFF) << 11) ;
       }
-      writeWordSPI (idf) ;
-  //--- Write DLC, RTR, IDE bits
+      
+  //--- DLC, RTR, IDE bits
     uint32_t data = (inMessage.len > 8) ? 8 : inMessage.len ;
     if (inMessage.rtr) {
       data |= 1 << 5 ; // Set RTR bit
@@ -481,12 +479,44 @@ void ACAN2517::appendInControllerTxFIFO (const CANMessage & inMessage) {
     if (inMessage.ext) {
       data |= 1 << 4 ; // Set EXT bit
     }
-    writeWordSPI (data) ;
-  //--- Write data (Swap data if processor is big endian)
-    writeWordSPI (inMessage.data32 [0]) ;
-    writeWordSPI (inMessage.data32 [1]) ;
-  deassertCS () ;
-//--- Increment FIFO, send message (see DS20005688B, page 48)
+    assertCS () ;    
+    #ifndef OPTIMIZED_SPI
+      writeCommandSPI (ramAddress) ;
+      writeWordSPI (idf) ;
+      writeWordSPI (data) ;
+    //--- Write data (Swap data if processor is big endian)
+      writeWordSPI (inMessage.data32 [0]) ;
+      writeWordSPI (inMessage.data32 [1]) ;
+    #else
+      unsigned char buff[18]={0};  
+      const uint16_t writeCommand = (ramAddress & 0x0FFF) | (0b0010 << 12) ;
+      buff[0] = writeCommand >> 8;
+      buff[1] = writeCommand & 0xFF;
+      // idf
+      buff[2] = (uint8_t) idf;
+      buff[3] = (uint8_t) (idf >>  8);
+      buff[4] = (uint8_t) (idf >> 16);
+      buff[5] = (uint8_t) (idf >> 24);
+      // data
+      buff[6] = (uint8_t) data;
+      buff[7] = (uint8_t) (data >>  8);
+      buff[8] = (uint8_t) (data >> 16);
+      buff[9] = (uint8_t) (data >> 24);
+      //--- data (Swap data if processor is big endian)
+      // inMessage.data32 [0]
+      buff[10] = (uint8_t) inMessage.data32 [0];
+      buff[11] = (uint8_t) (inMessage.data32 [0] >>  8);
+      buff[12] = (uint8_t) (inMessage.data32 [0] >> 16);
+      buff[13] = (uint8_t) (inMessage.data32 [0] >> 24);
+      // inMessage.data32 [1]
+      buff[14] = (uint8_t) inMessage.data32 [1];
+      buff[15] = (uint8_t) (inMessage.data32 [1] >>  8);
+      buff[16] = (uint8_t) (inMessage.data32 [1] >> 16);
+      buff[17] = (uint8_t) (inMessage.data32 [1] >> 24);
+      mSPI.transfer(buff,18);
+    #endif
+    deassertCS () ;
+  //--- Increment FIFO, send message (see DS20005688B, page 48)
   const uint8_t d = (1 << 0) | (1 << 1) ; // Set UINC bit, TXREQ bit
   writeByteRegisterSPI (C1FIFOCON_REGISTER (2) + 1, d);
 }
@@ -498,30 +528,61 @@ bool ACAN2517::sendViaTXQ (const CANMessage & inMessage) {
   const bool TXQNotFull = mUsesTXQ && (readByteRegisterSPI (C1TXQSTA_REGISTER) & 1) != 0 ;
   if (TXQNotFull) {
     const uint16_t ramAddress = (uint16_t) (0x400 + readRegisterSPI (C1TXQUA_REGISTER)) ;
-    assertCS () ;
-      writeCommandSPI (ramAddress) ;
-    //--- Write identifier: if an extended frame is sent, identifier bits sould be reordered (see DS20005678B, page 27)
-      uint32_t idf = inMessage.id ;
-      if (inMessage.ext) {
+    //--- identifier: if an extended frame is sent, identifier bits sould be reordered (see DS20005678B, page 27)
+    uint32_t idf = inMessage.id ;
+    if (inMessage.ext) {
         idf = ((inMessage.id >> 18) & 0x7FF) | ((inMessage.id & 0x3FFFF) << 11) ;
-      }
-      writeWordSPI (idf) ;
-    //--- Write DLC, RTR, IDE bits
-      uint32_t data = (inMessage.len > 8) ? 8 : inMessage.len ;
-      if (inMessage.rtr) {
+    }
+    
+    //--- DLC, RTR, IDE bits
+    uint32_t data = (inMessage.len > 8) ? 8 : inMessage.len ;
+    if (inMessage.rtr) {
         data |= 1 << 5 ; // Set RTR bit
-      }
-      if (inMessage.ext) {
+    }
+    if (inMessage.ext) {
         data |= 1 << 4 ; // Set EXT bit
-      }
+    }
+    assertCS () ; 
+    #ifndef OPTIMIZED_SPI  
+      writeCommandSPI (ramAddress) ;
+      writeWordSPI (idf) ;
       writeWordSPI (data) ;
-    //--- Write data (Swap data if processor is big endian)
+     //--- Write data (Swap data if processor is big endian)
       writeWordSPI (inMessage.data32 [0]) ;
       writeWordSPI (inMessage.data32 [1]) ;
-    deassertCS () ;
-  //--- Increment FIFO, send message (see DS20005688B, page 48)
-    const uint8_t d = (1 << 0) | (1 << 1) ; // Set UINC bit, TXREQ bit
-    writeByteRegisterSPI (C1TXQCON_REGISTER + 1, d);
+    #else
+      unsigned char buff[18]={0};  
+      const uint16_t writeCommand = (ramAddress & 0x0FFF) | (0b0010 << 12) ;
+      buff[0] = writeCommand >> 8;
+      buff[1] = writeCommand & 0xFF;
+      // idf
+      buff[2] = (uint8_t) idf;
+      buff[3] = (uint8_t) (idf >>  8);
+      buff[4] = (uint8_t) (idf >> 16);
+      buff[5] = (uint8_t) (idf >> 24);
+      // data
+      buff[6] = (uint8_t) data;
+      buff[7] = (uint8_t) (data >>  8);
+      buff[8] = (uint8_t) (data >> 16);
+      buff[9] = (uint8_t) (data >> 24);
+      //--- data (Swap data if processor is big endian)
+      // inMessage.data32 [0]
+      buff[10] = (uint8_t) inMessage.data32 [0];
+      buff[11] = (uint8_t) (inMessage.data32 [0] >>  8);
+      buff[12] = (uint8_t) (inMessage.data32 [0] >> 16);
+      buff[13] = (uint8_t) (inMessage.data32 [0] >> 24);
+      // inMessage.data32 [1]
+      buff[14] = (uint8_t) inMessage.data32 [1];
+      buff[15] = (uint8_t) (inMessage.data32 [1] >>  8);
+      buff[16] = (uint8_t) (inMessage.data32 [1] >> 16);
+      buff[17] = (uint8_t) (inMessage.data32 [1] >> 24);
+      mSPI.transfer(buff,18);
+    #endif      
+    deassertCS () ; 
+     //--- Increment FIFO, send message (see DS20005688B, page 48)
+      const uint8_t d = (1 << 0) | (1 << 1) ; // Set UINC bit, TXREQ bit
+      writeByteRegisterSPI (C1TXQCON_REGISTER + 1, d);
+
   }
   return TXQNotFull ;
 }
@@ -604,7 +665,7 @@ bool ACAN2517::dispatchReceivedMessage (const tFilterMatchCallBack inFilterMatch
 #ifndef ARDUINO_ARCH_ESP32
   void ACAN2517::poll (void) {
     noInterrupts () ;
-      while (isr_core ()) {}
+    while (isr_core ()) {}
     interrupts () ;
   }
 #endif
@@ -721,27 +782,47 @@ void ACAN2517::readCommandSPI (const uint16_t inRegisterAddress) {
 //——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 
 void ACAN2517::writeCommandSPI (const uint16_t inRegisterAddress) {
-  const uint16_t readCommand = (inRegisterAddress & 0x0FFF) | (0b0010 << 12) ;
-  mSPI.transfer16 (readCommand) ;
+  const uint16_t writeCommand = (inRegisterAddress & 0x0FFF) | (0b0010 << 12) ;
+  mSPI.transfer16 (writeCommand) ;
 }
 
 //——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 
 uint32_t ACAN2517::readWordSPI (void) {
-  uint32_t result = mSPI.transfer (0) ;
-  result |= ((uint32_t) mSPI.transfer (0)) <<  8 ;
-  result |= ((uint32_t) mSPI.transfer (0)) << 16 ;
-  result |= ((uint32_t) mSPI.transfer (0)) << 24 ;
+    
+  #ifndef OPTIMIZED_SPI
+    uint32_t result = mSPI.transfer (0) ;
+    result |= ((uint32_t) mSPI.transfer (0)) <<  8 ;
+    result |= ((uint32_t) mSPI.transfer (0)) << 16 ;
+    result |= ((uint32_t) mSPI.transfer (0)) << 24 ;
+  #else
+    uint32_t result  = 0;
+    unsigned char buff[4]={0};
+    mSPI.transfer(buff,4);
+    result |= ((uint32_t)buff[0]) << 0;
+    result |= ((uint32_t)buff[1]) << 8;
+    result |= ((uint32_t)buff[2]) << 16;
+    result |= ((uint32_t)buff[3]) << 24;
+  #endif
   return result ;
 }
 
 //——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 
 void ACAN2517::writeWordSPI (const uint32_t inValue) {
-  mSPI.transfer ((uint8_t) inValue) ;
-  mSPI.transfer ((uint8_t) (inValue >>  8)) ;
-  mSPI.transfer ((uint8_t) (inValue >> 16)) ;
-  mSPI.transfer ((uint8_t) (inValue >> 24)) ;
+  #ifndef OPTIMIZED_SPI
+    mSPI.transfer ((uint8_t) inValue) ;
+    mSPI.transfer ((uint8_t) (inValue >>  8)) ;
+    mSPI.transfer ((uint8_t) (inValue >> 16)) ;
+    mSPI.transfer ((uint8_t) (inValue >> 24)) ;
+  #else
+    unsigned char buff[4]={0};
+    buff[0] = (uint8_t) inValue;
+    buff[1] = (uint8_t) (inValue >>  8);
+    buff[2] = (uint8_t) (inValue >> 16);
+    buff[3] = (uint8_t) (inValue >> 24);
+    mSPI.transfer(buff,4);
+  #endif
 }
 
 //——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -762,6 +843,7 @@ void ACAN2517::deassertCS (void) {
 
 void ACAN2517::writeRegisterSPI (const uint16_t inRegisterAddress, const uint32_t inValue) {
   assertCS () ;
+    //#ifdef OPTIMIZED_SPI TODO
     writeCommandSPI (inRegisterAddress) ; // Command
     writeWordSPI (inValue) ; // Data
   deassertCS () ;
@@ -771,8 +853,21 @@ void ACAN2517::writeRegisterSPI (const uint16_t inRegisterAddress, const uint32_
 
 uint32_t ACAN2517::readRegisterSPI (const uint16_t inRegisterAddress) {
   assertCS () ;
+  #ifndef OPTIMIZED_SPI
     readCommandSPI (inRegisterAddress) ; // Command
     const uint32_t result = readWordSPI () ; // Data
+  #else
+      const uint16_t readCommand = (inRegisterAddress & 0x0FFF) | (0b0011 << 12) ;
+      unsigned char buff[6]={0};
+      buff[0] = readCommand >> 8;
+      buff[1] = readCommand & 0xFF;
+      uint32_t result  = 0;
+      mSPI.transfer(buff,6);
+      result |= ((uint32_t)buff[2+0]) << 0;
+      result |= ((uint32_t)buff[2+1]) << 8;
+      result |= ((uint32_t)buff[2+2]) << 16;
+      result |= ((uint32_t)buff[2+3]) << 24;
+  #endif
   deassertCS () ;
   return result ;
 }
@@ -781,8 +876,17 @@ uint32_t ACAN2517::readRegisterSPI (const uint16_t inRegisterAddress) {
 
 void ACAN2517::writeByteRegisterSPI (const uint16_t inRegisterAddress, const uint8_t inValue) {
   assertCS () ;
+  #ifndef OPTIMIZED_SPI
     writeCommandSPI (inRegisterAddress) ; // Command
-    mSPI.transfer (inValue) ; // Data
+    mSPI.transfer (inValue) ; // Data  
+  #else  
+    unsigned char buff[3]={0};  
+    const uint16_t writeCommand = (inRegisterAddress & 0x0FFF) | (0b0010 << 12) ;
+    buff[0] = writeCommand >> 8;
+    buff[1] = writeCommand & 0xFF;
+    buff[2] = inValue;
+    mSPI.transfer(buff,3);  
+  #endif
   deassertCS () ;
 }
 
@@ -790,8 +894,17 @@ void ACAN2517::writeByteRegisterSPI (const uint16_t inRegisterAddress, const uin
 
 uint8_t ACAN2517::readByteRegisterSPI (const uint16_t inRegisterAddress) {
   assertCS () ;
+  #ifndef OPTIMIZED_SPI
     readCommandSPI (inRegisterAddress) ; // Command
     const uint8_t result = mSPI.transfer (0) ; // Data
+  #else  
+    unsigned char buff[3]={0};  
+    const uint16_t readCommand = (inRegisterAddress & 0x0FFF) | (0b0011 << 12) ;
+    buff[0] = readCommand >> 8;
+    buff[1] = readCommand & 0xFF;
+    mSPI.transfer(buff,3);  
+    const uint8_t result = buff[2];
+  #endif
   deassertCS () ;
   return result ;
 }

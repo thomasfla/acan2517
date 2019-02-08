@@ -118,27 +118,27 @@ class ACAN2517 {
 //    Private methods
 //······················································································································
 
-  private: void readCommandSPI (const uint16_t inRegisterAddress) ;
-  private: void writeCommandSPI (const uint16_t inRegisterAddress) ;
-  private: uint32_t readWordSPI (void) ;
-  private: void writeWordSPI (const uint32_t inValue) ;
+  public: void readCommandSPI (const uint16_t inRegisterAddress) ;
+  public: void writeCommandSPI (const uint16_t inRegisterAddress) ;
+  public: uint32_t readWordSPI (void) ;
+  public: void writeWordSPI (const uint32_t inValue) ;
 
-  private: void writeRegisterSPI (const uint16_t inRegisterAddress, const uint32_t inValue) ;
-  private: uint32_t readRegisterSPI (const uint16_t inRegisterAddress) ;
-  private: void writeByteRegisterSPI (const uint16_t inRegisterAddress, const uint8_t inValue) ;
-  private: uint8_t readByteRegisterSPI (const uint16_t inRegisterAddress) ;
-  private: void assertCS (void) ;
-  private: void deassertCS (void) ;
+  public: void writeRegisterSPI (const uint16_t inRegisterAddress, const uint32_t inValue) ;
+  public: uint32_t readRegisterSPI (const uint16_t inRegisterAddress) ;
+  public: void writeByteRegisterSPI (const uint16_t inRegisterAddress, const uint8_t inValue) ;
+  public: uint8_t readByteRegisterSPI (const uint16_t inRegisterAddress) ;
+  public: void assertCS (void) ;
+  public: void deassertCS (void) ;
 
-  private: void reset2517FD (void) ;
-  private: void writeRegister (const uint16_t inAddress, const uint32_t inValue) ;
-  private: uint32_t readRegister (const uint16_t inAddress) ;
-  private: void writeByteRegister (const uint16_t inRegisterAddress, const uint8_t inValue) ;
-  private: uint8_t readByteRegister (const uint16_t inAddress) ;
+  public: void reset2517FD (void) ;
+  public: void writeRegister (const uint16_t inAddress, const uint32_t inValue) ;
+  public: uint32_t readRegister (const uint16_t inAddress) ;
+  public: void writeByteRegister (const uint16_t inRegisterAddress, const uint8_t inValue) ;
+  public: uint8_t readByteRegister (const uint16_t inAddress) ;
 
-  private: bool sendViaTXQ (const CANMessage & inMessage) ;
-  private: bool enterInTransmitBuffer (const CANMessage & inMessage) ;
-  private: void appendInControllerTxFIFO (const CANMessage & inMessage) ;
+  public: bool sendViaTXQ (const CANMessage & inMessage) ;
+  public: bool enterInTransmitBuffer (const CANMessage & inMessage) ;
+  public: void appendInControllerTxFIFO (const CANMessage & inMessage) ;
 
 //······················································································································
 //    Polling
