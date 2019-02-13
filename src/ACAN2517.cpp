@@ -741,19 +741,51 @@ void ACAN2517::receiveInterrupt (void) {
   const uint16_t ramAddress = (uint16_t) (0x400 + readRegisterSPI (C1FIFOUA_REGISTER (receiveFIFOIndex))) ;
   CANMessage message ;
   assertCS () ;
+  #ifndef OPTIMIZED_SPI
     readCommandSPI (ramAddress) ;
-  //--- Read identifier (see DS20005678B, page 42)
-    message.id = readWordSPI () ;
-  //--- Read DLC, RTR, IDE bits, and math filter index
+    message.id = readWordSPI () ; //--- Read identifier (see DS20005678B, page 42)
     const uint32_t data = readWordSPI () ;
+    message.data32 [0] = readWordSPI () ;
+    message.data32 [1] = readWordSPI () ;
+  #else
+      const uint16_t readCommand = (ramAddress & 0x0FFF) | (0b0011 << 12) ;
+      unsigned char buff[18]={0};
+      buff[0] = readCommand >> 8;
+      buff[1] = readCommand & 0xFF;
+      message.id  = 0;
+      message.data64 = 0;
+      uint32_t data = 0;
+      mSPI.transfer(buff,18);
+      // data
+      data |= ((uint32_t)buff[2]) << 0;
+      data |= ((uint32_t)buff[3]) << 8;
+      data |= ((uint32_t)buff[4]) << 16;
+      data |= ((uint32_t)buff[5]) << 24;
+      // id
+      message.id |= ((uint32_t)buff[6]) << 0;
+      message.id |= ((uint32_t)buff[7]) << 8;
+      message.id |= ((uint32_t)buff[8]) << 16;
+      message.id |= ((uint32_t)buff[9]) << 24;
+      //--- Read data (Swap data if processor is big endian)
+      // data32[0]
+      message.data32 [0] |= ((uint32_t)buff[10]) << 0;
+      message.data32 [0] |= ((uint32_t)buff[11]) << 8;
+      message.data32 [0] |= ((uint32_t)buff[12]) << 16;
+      message.data32 [0] |= ((uint32_t)buff[13]) << 24;
+      // data32[1]
+      message.data32 [1] |= ((uint32_t)buff[14]) << 0;
+      message.data32 [1] |= ((uint32_t)buff[15]) << 8;
+      message.data32 [1] |= ((uint32_t)buff[16]) << 16;
+      message.data32 [1] |= ((uint32_t)buff[17]) << 24;
+  #endif
+  deassertCS () ;  
+    
+  //--- Read DLC, RTR, IDE bits, and math filter index
     message.rtr = (data & (1 << 5)) != 0 ;
     message.ext = (data & (1 << 4)) != 0 ;
     message.len = data & 0x0F ;
     message.idx = (uint8_t) ((data >> 11) & 0x1F) ;
-  //--- Write data (Swap data if processor is big endian)
-    message.data32 [0] = readWordSPI () ;
-    message.data32 [1] = readWordSPI () ;
-  deassertCS () ;
+
 //--- If an extended frame is received, identifier bits sould be reordered (see DS20005678B, page 42)
   if (message.ext) {
     const uint32_t tempID = message.id ;
