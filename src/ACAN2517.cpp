@@ -4,7 +4,7 @@
 // https://github.com/pierremolinaro/acan2517
 //
 //——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
-//#define OPTIMIZED_SPI
+#define OPTIMIZED_SPI
 #include <ACAN2517.h>
 
 //——————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -753,19 +753,19 @@ void ACAN2517::receiveInterrupt (void) {
       buff[0] = readCommand >> 8;
       buff[1] = readCommand & 0xFF;
       message.id  = 0;
-      message.data64 = 0;
       uint32_t data = 0;
+      message.data64 = 0;
       mSPI.transfer(buff,18);
-      // data
-      data |= ((uint32_t)buff[2]) << 0;
-      data |= ((uint32_t)buff[3]) << 8;
-      data |= ((uint32_t)buff[4]) << 16;
-      data |= ((uint32_t)buff[5]) << 24;
       // id
-      message.id |= ((uint32_t)buff[6]) << 0;
-      message.id |= ((uint32_t)buff[7]) << 8;
-      message.id |= ((uint32_t)buff[8]) << 16;
-      message.id |= ((uint32_t)buff[9]) << 24;
+      message.id |= ((uint32_t)buff[2]) << 0;
+      message.id |= ((uint32_t)buff[3]) << 8;
+      message.id |= ((uint32_t)buff[4]) << 16;
+      message.id |= ((uint32_t)buff[5]) << 24;      
+      // data
+      data |= ((uint32_t)buff[6]) << 0;
+      data |= ((uint32_t)buff[7]) << 8;
+      data |= ((uint32_t)buff[8]) << 16;
+      data |= ((uint32_t)buff[9]) << 24;
       //--- Read data (Swap data if processor is big endian)
       // data32[0]
       message.data32 [0] |= ((uint32_t)buff[10]) << 0;
@@ -786,17 +786,17 @@ void ACAN2517::receiveInterrupt (void) {
     message.len = data & 0x0F ;
     message.idx = (uint8_t) ((data >> 11) & 0x1F) ;
 
-//--- If an extended frame is received, identifier bits sould be reordered (see DS20005678B, page 42)
+  //--- If an extended frame is received, identifier bits sould be reordered (see DS20005678B, page 42)
   if (message.ext) {
     const uint32_t tempID = message.id ;
     message.id = ((tempID >> 11) & 0x3FFFF) | ((tempID & 0x7FF) << 18) ;
   }
-//--- Append message to driver receive FIFO
+  //--- Append message to driver receive FIFO
   mDriverReceiveBuffer.append (message) ;
-//--- Increment FIFO
+  //--- Increment FIFO
   const uint8_t d = 1 << 0 ; // Set UINC bit (DS20005688B, page 52)
   writeByteRegisterSPI (C1FIFOCON_REGISTER (receiveFIFOIndex) + 1, d) ;
-//--- If driver receive FIFO is full, disable "FIFO not empty" interrupt
+  //--- If driver receive FIFO is full, disable "FIFO not empty" interrupt
   if (mDriverReceiveBuffer.count () == mDriverReceiveBuffer.size ()) {
     writeByteRegisterSPI (C1FIFOCON_REGISTER (receiveFIFOIndex), 0) ;
   }
